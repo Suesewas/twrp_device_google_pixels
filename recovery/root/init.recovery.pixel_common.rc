@@ -61,7 +61,7 @@ on init
     # Start KeyMint HAL (registers binder services for keystore2 → metadata decrypt)
     # Both services are defined — the wrong one for the current SoC will fail
     # harmlessly (binary missing or Trusty TA mismatch) and stop immediately.
-    # Zuma/Zumapro → Rust keymint; GS201 → C++ keymint.
+    # Zuma/Zumapro → Rust keymint; GS101/GS201 → C++ keymint.
     start vendor.keymint.rust-trusty
     start vendor.keymint-trusty
 
