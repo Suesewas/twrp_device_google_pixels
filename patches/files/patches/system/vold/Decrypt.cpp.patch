@@ -1,6 +1,6 @@
 --- a/system/vold/Decrypt.cpp
 +++ b/system/vold/Decrypt.cpp
-@@ -20,20 +20,23 @@
+@@ -20,12 +20,15 @@
  
  #include <map>
  #include <string>
@@ -15,9 +15,8 @@
 +#include <sys/wait.h>
  
  #include <keyutils.h>
--#include "Weaver1.h"
  #include "cutils/properties.h"
- 
+@@ -33,6 +36,7 @@
  #include <openssl/sha.h>
  #include <openssl/aes.h>
  #include <openssl/evp.h>
@@ -25,14 +24,6 @@
  #include <openssl/rand.h>
  
  #include <dirent.h>
-@@ -85,6 +88,7 @@
- #include "HashPassword.h"
- #include "KeystoreInfo.hpp"
- #include "KeyStorage.h"
-+#include "Weaver1.h"
- #include "android/os/IVold.h"
- 
- namespace apc = ::aidl::android::security::apc;
 @@ -240,6 +244,10 @@
  	return true;
  }
@@ -44,54 +35,13 @@
  // Crappy functions for debugging, please ignore unless you need to debug
  // void output_hex(const std::string& in) {
  // 	const char *buf = in.data();
-@@ -401,21 +409,48 @@
-  * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#768 */
- bool Get_Weaver_Data(const std::string& spblob_path, const std::string& handle_str, weaver_data_struct *wd) {
- 	printf("Get_Weaver_Data\n");
--	std::string weaver_file = spblob_path + handle_str + ".weaver";
-+	bool found_file = false;
- 	std::string weaver_data;
--	if (!android::base::ReadFileToString(weaver_file, &weaver_data)) {
--		printf("Failed to read '%s'\n", weaver_file.c_str());
--		return false;
-+	std::string file = spblob_path + handle_str + ".weaver";
-+	if (android::vold::pathExists(file)) {
-+		if (!android::base::ReadFileToString(file, &weaver_data)) {
-+			printf("Failed to read '%s'\n", file.c_str());
-+		} else
-+			found_file = true;
-+	} else {
-+		printf("trying to read %s_file data with leading 0\n", file.c_str());
-+		std::vector<std::string> file_paths = {
-+			spblob_path + "0" + handle_str + ".weaver",
-+			spblob_path + "00" + handle_str + ".weaver"
-+		};
-+		for (auto& file : file_paths) {
-+			if (!android::base::ReadFileToString(file, &weaver_data)) {
-+				printf("Failed to read '%s'\n", file.c_str());
-+			} else {
-+				found_file = true;
-+				break;
-+			}
-+		}
- 	}
--	// output_hex(weaver_data.data(), weaver_data.size());printf("\n");
--	const unsigned char* byteptr = (const unsigned char*)weaver_data.data();
--	wd->version = *byteptr;
--	// printf("weaver version %i\n", wd->version);
--	const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
--	wd->slot = *intptr;
--	//endianswap(&wd->slot); not needed
--	// printf("weaver slot %i\n", wd->slot);
--	return true;
-+	if (found_file == false) {
-+		printf("Get_Weaver_Data: No weaver file found for %s\n", handle_str.c_str());
-+		return found_file;
-+	} else {
-+		// output_hex(weaver_data.data(), weaver_data.size());printf("\n");
-+		const unsigned char* byteptr = (const unsigned char*)weaver_data.data();
-+		wd->version = *byteptr;
-+		// printf("weaver version %i\n", wd->version);
+@@ -432,9 +440,14 @@
+ 		const unsigned char* byteptr = (const unsigned char*)weaver_data.data();
+ 		wd->version = *byteptr;
+ 		// printf("weaver version %i\n", wd->version);
+-		const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
+-		wd->slot = *intptr;
+-		//endianswap(&wd->slot); not needed
 +		if (weaver_data.size() == 5) {
 +			// packed layout (newer Android): version(1) + slot(4, big-endian)
 +			wd->slot = ((int)byteptr[1] << 24) | ((int)byteptr[2] << 16) |
@@ -100,13 +50,19 @@
 +			const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
 +			wd->slot = *intptr;
 +		}
-+		// printf("weaver slot %i\n", wd->slot);
-+	}
-+	return found_file;
+ 		// printf("weaver slot %i\n", wd->slot);
+ 	}
+ 	return found_file;
+@@ -446,7 +459,7 @@
+  * the keystore is not always ready when TWRP boots */
+ android::sp<IBinder> getKeystoreBinder() {
+ 	android::sp<IServiceManager> sm = android::defaultServiceManager();
+-    return sm->waitForService(String16("android.security.keystore"));
++    return sm->getService(String16("android.security.keystore"));
  }
  
- namespace android {
-@@ -445,6 +480,7 @@
+ android::sp<IBinder> getKeystoreBinderRetry() {
+@@ -467,6 +480,7 @@
  #define SYNTHETIC_PASSWORD_VERSION_V1 1
  #define SYNTHETIC_PASSWORD_VERSION_V2 2
  #define SYNTHETIC_PASSWORD_VERSION_V3 3
@@ -114,7 +70,7 @@
  #define SYNTHETIC_PASSWORD_PASSWORD_BASED 0
  #define SYNTHETIC_PASSWORD_KEY_PREFIX "USRSKEY_synthetic_password_"
  #define USR_PRIVATE_KEY_PREFIX "USRPKEY_synthetic_password_"
-@@ -497,7 +533,8 @@
+@@ -519,7 +533,8 @@
  			return disk_decryption_secret_key;
  		unsigned char* byteptr = (unsigned char*)spblob_data.data();
  		if (*byteptr != SYNTHETIC_PASSWORD_VERSION_V2 && *byteptr != SYNTHETIC_PASSWORD_VERSION_V1
@@ -124,7 +80,7 @@
  			printf("Unsupported synthetic password version %i\n", *byteptr);
  			return disk_decryption_secret_key;
  		}
-@@ -509,8 +546,12 @@
+@@ -531,8 +546,12 @@
  		}
  		byteptr++; // Now we're pointing to the blob data itself
  		if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V2
@@ -139,7 +95,7 @@
  			/* Version 2 / 3 of the spblob is basically the same as version 1, but the order of getting the intermediate key and disk decryption key have been flip-flopped
  			* as seen in https://android.googlesource.com/platform/frameworks/base/+/5025791ac6d1538224e19189397de8d71dcb1a12
  			*/
-@@ -611,15 +652,143 @@
+@@ -633,15 +652,143 @@
  			EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text, cipher_size);
  			unsigned char tag[AES_BLOCK_SIZE];
  			EVP_CIPHER_CTX_ctrl(d_ctx, EVP_CTRL_GCM_SET_TAG, 16, tag);
@@ -288,33 +244,29 @@
  				// V3 uses SP800 instead of SHA512
  				disk_decryption_secret_key = PersonalizedHashSP800(PERSONALIZATION_FBE_KEY, PERSONALISATION_CONTEXT, (const char*)secret_key, secret_key_real_size);
  			} else {
-@@ -647,11 +816,21 @@
+@@ -669,7 +816,7 @@
  }
  
  bool Is_Weaver(const std::string& spblob_path, const std::string& handle_str) {
 -	printf("Is_Weaver\n");
--	std::string weaver_file = spblob_path + handle_str + ".weaver";
 +	printf("Is_Weaver (handle='%s')\n", handle_str.c_str());
  	struct stat st;
--	if (stat(weaver_file.c_str(), &st) == 0)
--		return true;
-+	std::vector<std::string> weaver_file_paths = {
-+		spblob_path + handle_str + ".weaver",
-+		spblob_path + "0" + handle_str + ".weaver",
-+		spblob_path + "00" + handle_str + ".weaver"
-+	};
-+    for (auto& weaver_file : weaver_file_paths) {
-+		if (stat(weaver_file.c_str(), &st) == 0) {
+ 	std::vector<std::string> weaver_file_paths = {
+ 		spblob_path + handle_str + ".weaver",
+@@ -678,10 +825,12 @@
+ 	};
+     for (auto& weaver_file : weaver_file_paths) {
+ 		if (stat(weaver_file.c_str(), &st) == 0) {
 +			printf("Is_Weaver: matched %s\n", weaver_file.c_str());
-+			return true;
-+			break;
-+		}
-+	}
+ 			return true;
+ 			break;
+ 		}
+ 	}
 +	printf("Is_Weaver: no .weaver file under %s, secdis path\n", spblob_path.c_str());
  	return false;
  }
  
-@@ -762,9 +941,18 @@
+@@ -792,9 +941,18 @@
  		// Send the slot from the .weaver file, the computed weaver key, and get the escrowed key data
  		std::vector<uint8_t> weaver_payload;
  		// TODO: we should return more information about the status including time delays before the next retry
@@ -335,3 +287,12 @@
  		}
  		// printf("weaver payload: "); output_hex(&weaver_payload); printf("\n");
  		// Done with weaverVerify
+@@ -931,7 +1089,7 @@
+ 					authToken.authenticatorType = static_cast<HardwareAuthenticatorType>(
+ 							betoh32(hwAuthToken->authenticator_type));
+ 					authToken.mac.assign(&hwAuthToken->hmac[0], &hwAuthToken->hmac[32]);
+-					AIBinder* authzAIBinder = AServiceManager_waitForService("android.security.authorization");
++					AIBinder* authzAIBinder = AServiceManager_getService("android.security.authorization");
+ 					::ndk::SpAIBinder binder(authzAIBinder);
+ 					auto service = aidl::android::security::authorization::IKeystoreAuthorization::fromBinder(binder);
+ 					if (service == NULL) {
