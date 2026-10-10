@@ -44,8 +44,25 @@ _log "device=$(getprop ro.hardware 2>/dev/null) uptime=$(awk '{print $1}' /proc/
 
 echo "- Starting reflash current recovery (AIO snapshot-based)"
 
-[ -d "$SNAP" ] \
-    || _die "Ramdisk snapshot not found at $SNAP. Was ramdisk_snapshot run at boot?"
+[ -d "$SNAP" ] || {
+    # Self-heal: marker boots (unpack markers present) never take a
+    # snapshot — the stub (snapshot.c) only snapshots on the unpack path.
+    # Rebuild it here with one cpio pass from the on-board manifest (no
+    # helper binary: the snapshot code lives inside the init stub, which
+    # has already exited by the time reflash runs).
+    echo "- No ramdisk snapshot (marker boot?) — rebuilding on demand..."
+    _log "snapshot missing, rebuilding on demand"
+    [ -f /ramdisk_snapshot_manifest.txt ] \
+        || _die "Ramdisk snapshot not found at $SNAP and no manifest to rebuild it."
+    mkdir -p "$SNAP" || _die "Cannot create $SNAP"
+    sed -n 's/^[fdl] [^ ]* [^ ]* [^ ]* \(\/[^ ]*\).*/\1/p' \
+        /ramdisk_snapshot_manifest.txt \
+        | grep -v '^/$' | sed 's|^/||' \
+        | (cd / && cpio -pd "$SNAP" >>"$LOGF" 2>&1) \
+        || _die "On-demand snapshot copy failed"
+    [ -d "$SNAP" ] \
+        || _die "Ramdisk snapshot not found at $SNAP. Was ramdisk_snapshot run at boot?"
+}
 
 RECOVERY_LIST="$SNAP/recovery_file_list.txt"
 [ -f "$RECOVERY_LIST" ] || _die "Missing snapshot file: $RECOVERY_LIST"
@@ -151,6 +168,19 @@ while IFS= read -r _f; do
 done < "$FOLDER/payload_list_full.txt"
 
 cd "$SNAP" || _die "Cannot cd to $SNAP"
+# Self-containment: the payload must carry the snapshot machinery itself
+# (manifest + file lists), otherwise the reflashed image can never
+# re-snapshot and every later reflash dies with "snapshot not found".
+# recovery_file_list.txt predates these files, so append them here from
+# the snapshot (present: the manifest find that built the snapshot runs
+# after the lists exist, so the snapshot always contains them).
+for _keep in ramdisk_snapshot_manifest.txt recovery_file_list.txt first_stage_file_list.txt; do
+    if { [ -e "$SNAP/$_keep" ] || [ -L "$SNAP/$_keep" ]; } \
+        && ! grep -qx "$_keep" "$FOLDER/payload_list.txt" 2>/dev/null; then
+        printf '%s\n' "$_keep" >> "$FOLDER/payload_list.txt"
+        _log "payload: keep snapshot machinery: $_keep"
+    fi
+done
 cpio -H newc -o < "$FOLDER/payload_list.txt" > "$FOLDER/payload.cpio" 2>>"$LOGF" \
     || _die "cpio failed building recovery payload"
 [ -s "$FOLDER/payload.cpio" ] || _die "payload.cpio is empty after cpio"
