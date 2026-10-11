@@ -645,6 +645,25 @@ if [[ -n "$LATEST_IMG" ]]; then
             FRAG_SRC="$FRAG_ALT"
         fi
         if [[ -f "$AIO_WORK/$FRAG_SRC" ]]; then
+            # AIO ships no first_stage (14.1 layout): strip the
+            # Soong-merged first_stage_ramdisk/ copy (linker, libs, fsck,
+            # its own snapuserd) plus the dead recovery snapuserd binary
+            # at system/bin/snapuserd from the extracted payload before
+            # recompressing. Native first_stage stays untouched in the
+            # device image (Type A installer preserves it); at runtime
+            # the first-stage copy is used (the LGZ cluster skips
+            # snapuserd for the same reason). magiskboot edits the cpio
+            # in place; one rm per call, output to a log file only
+            # (never pipe it to head: SIGPIPE kills magiskboot before
+            # write-back). Best-effort: a strip failure only warns, the
+            # payload still ships as before.
+            for _strip_rm in "rm -r first_stage_ramdisk" "rm system/bin/snapuserd"; do
+                "$MAGISKBOOT_BIN" cpio "$AIO_WORK/$FRAG_SRC" "$_strip_rm" \
+                    >>"$AIO_WORK/strip.log" 2>&1 || \
+                    echo "[build] WARNING: payload strip '$_strip_rm' failed (payload still ships)"
+            done
+            _stripped=$(grep -c "Removed entry" "$AIO_WORK/strip.log" 2>/dev/null || true)
+            echo "[build] payload: stripped ${_stripped:-0} first_stage/dead-snapuserd entries (AIO has no first_stage)"
             # magiskboot unpacks fragments decompressed; recompress to the
             # stock lz4_legacy format for the fragment flash path.
             lz4 -l -9 -f "$AIO_WORK/$FRAG_SRC" "$AIO_WORK/vendor_ramdisk.cpio.lz4"
