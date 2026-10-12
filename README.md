@@ -58,6 +58,33 @@ Root is for quick start. Depth lives in `docs/` — each file answers one
 | [`docs/FOX_FLAGS.md`](docs/FOX_FLAGS.md) | All 70+ OFox build flags |
 | [`docs/credits.en.md`](docs/credits.en.md) | What was borrowed and from where |
 
+## Project status
+
+Field-tested state ahead of the first release. Columns are Tensor
+generations (left to right), rows are features (top to bottom).
+
+> **Generations:** G1 = `gs101` (oriole/Pixel 6, raven/6 Pro, bluejay/6a);
+> G2 = `gs201` (panther/7, cheetah/7 Pro, lynx/7a, felix/Fold,
+> tangorpro/Tablet); G3 = `zuma` (shiba/8, husky/8 Pro, akita/8a);
+> G4 = `zumapro` (tokay/9, caiman/9 Pro, komodo/9 Pro XL, tegu/9a,
+> comet/9 Pro Fold, stallion/10a); G5 = `laguna` (frankel/10,
+> blazer/10 Pro, mustang/10 Pro XL, rango/10 Pro Fold); G6 = `malibu`
+> (cubs/11, grizzly/11 Pro, kodiak/11 Pro XL, yogi/11 Pro Fold).
+> ✅ confirmed working · ❌ known broken · ❔ not tested yet.
+
+| Feature | G1 | G2 | G3 | G4 | G5 | G6 |
+|---|---|---|---|---|---|---|
+| Data decryption | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MTP + ADB | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ROM flashing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| OTG | ❌ | ❔ | ✅ | ✅ | ❔ | ❔ |
+| Flashlight | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
+| Vibration | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
+| Reboot to Android | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
+
+> Testers are not very active, so minor per-family fixes are on hold —
+> the current state is stable enough for a first release.
+
 ## Three principles holding it all together
 
 1. **Config instead of code.** Vendor specifics (touch modules, sysfs
