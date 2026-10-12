@@ -19,24 +19,40 @@ kernel is kept.
 Field-tested state ahead of the first release. Columns are Tensor
 generations (left to right), rows are features (top to bottom).
 
-> **Generations:** G1 = `gs101` (oriole/Pixel 6, raven/6 Pro, bluejay/6a);
-> G2 = `gs201` (panther/7, cheetah/7 Pro, lynx/7a, felix/Fold,
-> tangorpro/Tablet); G3 = `zuma` (shiba/8, husky/8 Pro, akita/8a);
-> G4 = `zumapro` (tokay/9, caiman/9 Pro, komodo/9 Pro XL, tegu/9a,
-> comet/9 Pro Fold, stallion/10a); G5 = `laguna` (frankel/10,
-> blazer/10 Pro, mustang/10 Pro XL, rango/10 Pro Fold); G6 = `malibu`
-> (cubs/11, grizzly/11 Pro, kodiak/11 Pro XL, yogi/11 Pro Fold).
-> ✅ confirmed working · ❌ known broken · ❔ not tested yet.
+| Family | SoC | Devices |
+|---|---|---|
+| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
+| `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
+| `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
+| `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
+| `laguna` | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold) |
+| `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
+
+> 🟢 = works (confirmed) · 🔴 = broken ·
+> 🟡 = not tested yet.
 
 | Feature | G1 | G2 | G3 | G4 | G5 | G6 |
 |---|---|---|---|---|---|---|
-| Data decryption | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MTP + ADB | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ROM flashing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| OTG | ❌ | ❔ | ✅ | ✅ | ❔ | ❔ |
-| Flashlight | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
-| Vibration | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
-| Reboot to Android | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
+| Data decryption | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| MTP + ADB | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| ROM flashing | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTG | 🔴 | 🟡 | 🟢 | 🟢 | 🟡 | 🟡 |
+| Flashlight | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
+| Vibration | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
+| Reboot to Android | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Touchscreen | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Recovery boots | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Backup / restore | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Brightness control | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| ADB sideload | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Self-reflash | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Reboot menu | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| PIN unlock | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Slot switch | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Fastbootd | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Files + terminal | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTA survival | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Charging | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 
 > Testers are not very active, so minor per-family fixes are on hold —
 > the current state is stable enough for a first release.
@@ -50,15 +66,6 @@ that installs working recovery on any supported Pixel (both slots, with
 a userdata backup), plus the `*.ramdisk.lz4` payload it was packed from.
 The stock kernel is always kept; only the universal ramdisk payload is
 built. There are no per-family images.
-
-| Family | SoC | Devices |
-|---|---|---|
-| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
-| `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
-| `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
-| `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
-| `laguna` | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold) |
-| `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
 
 > 100% boot guarantee — only on `shiba` (maintainer's device).
 > Everything else goes through community testing:

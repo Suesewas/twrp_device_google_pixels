@@ -20,24 +20,40 @@
 Проверенное в поле состояние перед первым релизом. Столбцы —
 поколения Tensor (слева направо), строки — функции (сверху вниз).
 
-> **Поколения:** G1 = `gs101` (oriole/Pixel 6, raven/6 Pro, bluejay/6a);
-> G2 = `gs201` (panther/7, cheetah/7 Pro, lynx/7a, felix/Fold,
-> tangorpro/Tablet); G3 = `zuma` (shiba/8, husky/8 Pro, akita/8a);
-> G4 = `zumapro` (tokay/9, caiman/9 Pro, komodo/9 Pro XL, tegu/9a,
-> comet/9 Pro Fold, stallion/10a); G5 = `laguna` (frankel/10,
-> blazer/10 Pro, mustang/10 Pro XL, rango/10 Pro Fold); G6 = `malibu`
-> (cubs/11, grizzly/11 Pro, kodiak/11 Pro XL, yogi/11 Pro Fold).
-> ✅ работает, подтверждено · ❌ известно, что сломано · ❔ не проверялось.
+| Семейство | SoC | Устройства |
+|---|---|---|
+| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
+| `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
+| `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
+| `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
+| `laguna` | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold) |
+| `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
+
+> 🟢 = работает (подтверждено) · 🔴 = сломано ·
+> 🟡 = не проверялось.
 
 | Функция | G1 | G2 | G3 | G4 | G5 | G6 |
 |---|---|---|---|---|---|---|
-| Расшифровка data | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MTP + ADB | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Прошивка ROM | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| OTG | ❌ | ❔ | ✅ | ✅ | ❔ | ❔ |
-| Фонарик | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
-| Вибрация | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
-| Перезагрузка в Android | ✅ | ❔ | ✅ | ❔ | ❔ | ❔ |
+| Расшифровка data | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| MTP + ADB | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Прошивка ROM | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTG | 🔴 | 🟡 | 🟢 | 🟢 | 🟡 | 🟡 |
+| Фонарик | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
+| Вибрация | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
+| Перезагрузка в Android | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Тачскрин | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Загрузка рекавери | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Бэкап / восстановление | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Яркость экрана | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| ADB sideload | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Самоперепрошивка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Меню перезагрузки | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| PIN-разблокировка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Слоты A/B | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Fastbootd | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Файлы + терминал | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTA | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Зарядка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 
 > Тестеры не очень активны, поэтому мелкие посемейные фиксы отложены —
 > текущее состояние достаточно стабильно для первого релиза.
@@ -51,15 +67,6 @@
 бекапом userdata), плюс `*.ramdisk.lz4`-пейлоад, из которого он упакован.
 Стоковое ядро сохраняется всегда; собирается только универсальный
 рамдиск-пейлоад. Сборок по семействам нет.
-
-| Семейство | SoC | Устройства |
-|---|---|---|
-| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
-| `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
-| `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
-| `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
-| `laguna` | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold) |
-| `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
 
 > 100% гарантия запуска — только на `shiba` (девайс мейнтейнера).
 > Остальное — через тесты сообщества:
