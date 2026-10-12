@@ -868,6 +868,23 @@ case "$CALL_TYPE" in
         fi
         done
 
+        # The GS101 C++ KeyMint HAL has one vendor-only direct dependency
+        # (libkeymasterconfig.so). The HAL binary is staged in the ramdisk,
+        # so stage this matching library too; otherwise early init launches
+        # it before /vendor is mounted and the linker exits with
+        # "libkeymasterconfig.so not found". init.rc exports /vendor/lib64
+        # in LD_LIBRARY_PATH for this ramdisk copy.
+        km_config_lib="$PRODUCT_OUT/vendor/lib64/libkeymasterconfig.so"
+        if [ -f "$km_config_lib" ]; then
+            mkdir -p "$TARGET_DIR/vendor/lib64"
+            cp -f "$km_config_lib" "$TARGET_DIR/vendor/lib64/libkeymasterconfig.so"
+            chmod 644 "$TARGET_DIR/vendor/lib64/libkeymasterconfig.so"
+            echo "    [PLATFORM]   + libkeymasterconfig.so (GS101 KeyMint dependency)"
+        else
+            echo "    [PLATFORM] ERROR: KeyMint dependency not found at: $km_config_lib"
+            return 1
+        fi
+
         # --- VINTF keymint fragments ---
         # Every family's fragment ships renamed (keymint.<fam>.xml); the
         # installer keeps the target one post-unpack (include/aio/aio_swap.sh).

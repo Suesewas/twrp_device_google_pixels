@@ -859,9 +859,13 @@ void TWPartitionManager::Decrypt_Data() {
 			}
 #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
 #ifdef USE_FSCRYPT
-			std::string keymint_state = android::base::GetProperty("init.svc.vendor.keymint.rust-trusty", "");
-			if (!keymint_state.empty() && keymint_state != "running") {
-				LOGINFO("Skipping metadata decrypt: keymint service state is '%s'\n", keymint_state.c_str());
+			std::string keymint_cpp_state = android::base::GetProperty("init.svc.vendor.keymint-trusty", "");
+			std::string keymint_rust_state = android::base::GetProperty("init.svc.vendor.keymint.rust-trusty", "");
+			bool keymint_state_known = !keymint_cpp_state.empty() || !keymint_rust_state.empty();
+			bool keymint_running = keymint_cpp_state == "running" || keymint_rust_state == "running";
+			if (keymint_state_known && !keymint_running) {
+				LOGINFO("Skipping metadata decrypt: neither KeyMint service is running (cpp='%s', rust='%s')\n",
+					keymint_cpp_state.c_str(), keymint_rust_state.c_str());
 			} else {
 				// Fox (malibu): Trusty/keystore2 can still be settling when
 				// the first helper runs — grizzly fails the single attempt
@@ -883,7 +887,9 @@ void TWPartitionManager::Decrypt_Data() {
 				// today's behavior (plus the read-path fallback below).
 				std::string fox_zoned = FoxResolveZonedDevice();
 				bool md_ok = false;
-				for (int md_try = 0; md_try < 3 && !md_ok; md_try++) {
+				// TEST-ONLY (gs101 decrypt debug): single 20s attempt instead
+				// of 3x120s — do NOT ship, revert after field diagnosis.
+				for (int md_try = 0; md_try < 1 && !md_ok; md_try++) {
 					if (md_try > 0) {
 						LOGINFO("Metadata decrypt: retry %d/3 after 5s settle\n", md_try + 1);
 						sleep(5);
@@ -900,7 +906,7 @@ void TWPartitionManager::Decrypt_Data() {
 						Decrypt_Data->Current_File_System,
 						TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
 						fox_zoned,
-						120);
+						20);
 				}
 				if (md_ok) {
 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
@@ -958,7 +964,7 @@ void TWPartitionManager::Decrypt_Data() {
 			} else {
 				LOGINFO("Unable to decrypt metadata encryption\n");
 			}
-			} // end Fox metadata-decrypt retry block
+			} // end KeyMint service gate
 #else
 			LOGERR("Metadata FBE decrypt support not present in this build\n");
 #endif
