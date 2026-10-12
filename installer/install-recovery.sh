@@ -23,7 +23,7 @@
 # Exit codes: 0 ok, 1 usage/environment, 2 snapshot/build/flash failure.
 set -u
 
-TMPDIR="${RECOVERY_TMPDIR:-/tmp/recovery_install}"
+TMPDIR_WANT="${RECOVERY_TMPDIR:-/tmp/recovery_install}"
 BYNAME="${RECOVERY_BYNAME:-/dev/block/by-name}"
 SDCAND="${RECOVERY_SDCARDS:-/sdcard:/data/media/0}"
 BACKUP_SUB="backup_vendor_boot"
@@ -79,7 +79,17 @@ esac
 
 say "OrangeFox on-device vendor_boot installer"
 say "  slots: $(echo "$SLOTS" | tr ' ' '+') (export SLOT=$SLOT_CFG)"
-mkdir -p "$TMPDIR" || { echo "cannot create $TMPDIR"; exit 1; }
+# Booted Android has no /tmp (root / is read-only), while recovery does.
+# Try the wanted dir first, then writable fallbacks. A stale file at the
+# path (not a dir) is removed before retrying.
+TMPDIR=""
+for _cand in "$TMPDIR_WANT" "/data/local/tmp/recovery_install" "/data/adb/recovery_install.tmp"; do
+    [ -n "$_cand" ] || continue
+    [ -e "$_cand" ] && [ ! -d "$_cand" ] && rm -f "$_cand" 2>/dev/null || true
+    if mkdir -p "$_cand" 2>/dev/null; then TMPDIR="$_cand"; break; fi
+done
+[ -n "$TMPDIR" ] || { echo "cannot create tmpdir (tried $TMPDIR_WANT /data/local/tmp/recovery_install /data/adb/recovery_install.tmp)"; exit 1; }
+[ "$TMPDIR" != "$TMPDIR_WANT" ] && say "  tmp: $TMPDIR_WANT unavailable, using $TMPDIR"
 LOG="$TMPDIR/install.log"
 : > "$LOG" || { echo "cannot write $LOG"; exit 1; }
 say "  log: $LOG"

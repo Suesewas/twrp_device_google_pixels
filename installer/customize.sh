@@ -31,7 +31,7 @@ if sh "$MODPATH/install-recovery.sh"; then
 else
     ui_print "! install FAILED, removing installer module"
     rm -rf "$MODPATH" "$NVBASE/modules/$MODID" 2>/dev/null || true
-    abort "! vendor_boot install failed (see /tmp/recovery_install/install.log)"
+    abort "! vendor_boot install failed (see install.log in /tmp/recovery_install, /data/local/tmp/recovery_install or /data/adb/recovery_install.tmp)"
 fi
 
 return 0
