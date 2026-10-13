@@ -179,6 +179,9 @@ TW_EXCLUDE_APEX := true
 TW_EXCLUDE_DEFAULT_USB_INIT := true
 TW_EXCLUDE_TWRPAPP := true
 
+# TWRP Configuration - Backup exclusions (device-bound key material)
+TW_BACKUP_EXCLUSIONS := /data/misc/vold,/data/unencrypted,/data/misc/keystore,/data/system/locksettings.db,/data/system/locksettings.db-shm,/data/system/locksettings.db-wal,/data/system_de/0/spblob
+
 # TWRP Configuration - Crypto (FBE metadata decryption via Trusty TEE KeyMint)
 TW_INCLUDE_CRYPTO := true
 TW_INCLUDE_CRYPTO_FBE := true
