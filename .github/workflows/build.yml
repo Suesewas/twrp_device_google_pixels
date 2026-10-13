@@ -17,10 +17,14 @@ on:
         type: choice
         default: '0'
         options: ['0', '1', '2', '3']
+      device:
+        description: device codename for touch modules
+        type: string
+        default: panther
       snapshot_upstream:
         description: push bootable/recovery + vendor/recovery into branch upstream-snapshot
         type: boolean
-        default: true
+        default: false
 
 jobs:
   build:
@@ -109,6 +113,28 @@ jobs:
             --build-type "${{ inputs.build_type }}" \
             -l "${{ inputs.lgz_level }}" \
             -j$(nproc)
+
+      - name: Assemble vendor_boot.img
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVICE: ${{ inputs.device }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p artifacts
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/vendor_boot.img?ref=assets" -o stock_vendor_boot.img
+          ls -l stock_vendor_boot.img
+          PIXELS="$GITHUB_WORKSPACE/fox_14.1/device/google/pixels"
+          PAYLOAD="$(ls -t "$GITHUB_WORKSPACE"/fox_14.1/builds/*.ramdisk.lz4 | head -1)"
+          echo "payload: $PAYLOAD"
+          INJECT=""
+          [ -f "$PIXELS/installer/modules/${DEVICE}.lgz" ] && INJECT="--inject-lgz $PIXELS/installer/modules/${DEVICE}.lgz"
+          "$PIXELS/installer/bin/linux/install-linux-x86_64" install --file \
+            -i stock_vendor_boot.img -c "$PAYLOAD" -o artifacts/vendor_boot.img \
+            --device "$DEVICE" $INJECT \
+            --partition-size 67108864 --min-free-mb 7 --log artifacts/assemble.log
+          ls -l artifacts/vendor_boot.img
+          sha256sum artifacts/vendor_boot.img | tee artifacts/vendor_boot.sha256
 
       - name: Disk and ccache stats
         if: always()
