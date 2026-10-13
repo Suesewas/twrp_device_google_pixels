@@ -70,8 +70,25 @@ jobs:
           git config --global color.ui false
           git clone --depth 1 https://gitlab.com/OrangeFox/sync.git ofox-sync
           cd ofox-sync
+          set +e
           ./orangefox_sync.sh --branch 14.1 --path "$GITHUB_WORKSPACE/fox_14.1"
+          rc=$?
+          for i in 1 2 3 4; do
+            [ $rc -eq 0 ] && break
+            echo "=== sync retry $i (rc=$rc) ==="
+            if [ -d "$GITHUB_WORKSPACE/fox_14.1/.repo" ]; then
+              cd "$GITHUB_WORKSPACE/fox_14.1"
+              repo sync -c --force-sync --no-clone-bundle --no-tags -j4
+              rc=$?
+            else
+              cd "$GITHUB_WORKSPACE/ofox-sync"
+              ./orangefox_sync.sh --branch 14.1 --path "$GITHUB_WORKSPACE/fox_14.1"
+              rc=$?
+            fi
+          done
+          set -e
           df -h /
+          [ $rc -eq 0 ] || exit $rc
 
       - name: Place device tree
         run: |
