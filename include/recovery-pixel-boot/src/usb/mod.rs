@@ -23,6 +23,7 @@
 
 pub mod gs101;
 pub mod gs201;
+pub mod gate;
 pub mod laguna;
 pub mod malibu;
 pub mod zuma;
@@ -98,6 +99,13 @@ pub fn current_family() -> Family {
 pub fn run_otg_patch() -> Result<(), String> {
     let fam = current_family();
     log_msg(TAG, "INFO", &format!("otg-patch for family {}", fam.name()));
+    // Fool-proof gate first: a newer-than-firmware kernel panics on the
+    // VBUS host switch. Blocked = no shim, no writes, patch_dwc3 stays 0
+    // (the daemon below never starts).
+    if gate::check(&fam) == gate::Gate::Block {
+        let _ = set_prop("sys.usb.patch_dwc3", "0");
+        return Err("usb otg: kernel/firmware mismatch, custom stack disabled".into());
+    }
     match fam {
         Family::Zuma => zuma::run_otg_patch(),
         Family::Gs101 => gs101::run_otg_patch(),
@@ -117,6 +125,14 @@ pub fn run_otg_patch() -> Result<(), String> {
 pub fn run_otg_auto() -> ! {
     let fam = current_family();
     log_msg(TAG, "INFO", &format!("otg-auto for family {}", fam.name()));
+    // Belt and braces: the daemon must never drive VBUS on a gated tree
+    // (e.g. patch flag set by hand). Park like the unknown family.
+    if gate::check(&fam) == gate::Gate::Block {
+        log_msg(TAG, "INFO", "otg-auto gated off, parking (device mode)");
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
     match fam {
         Family::Zuma => zuma::run_otg_auto(),
         Family::Gs101 => gs101::run_otg_auto(),
