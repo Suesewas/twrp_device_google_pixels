@@ -1,0 +1,2 @@
+VENDOR_BOOT=https://mirrorbits.lineageos.org/full/panther/20261012/vendor_boot.img
+OTA=https://mirrorbits.lineageos.org/full/panther/20261012/lineage-24.0-20261012-nightly-panther-signed.zip

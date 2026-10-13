@@ -1,0 +1,27 @@
++ curl -fsSL https://download.lineageos.org/api/v2/devices/panther/builds -o base/builds.json
++ python3 -
+BUILD 1791806794 24.0 ['lineage-24.0-20261012-nightly-panther-signed.zip', 'boot.img', 'dtbo.img', 'init_boot.img', 'super_empty.img', 'vbmeta.img', 'vendor_boot.img', 'vendor_kernel_boot.img', 'build-manifest.xml']
+BUILD 1791528341 23.2 ['lineage-23.2-20261009-nightly-panther-signed.zip', 'boot.img', 'dtbo.img', 'init_boot.img', 'super_empty.img', 'vbmeta.img', 'vendor_boot.img', 'vendor_kernel_boot.img', 'build-manifest.xml']
++ cat base/urls.txt
+VENDOR_BOOT=https://mirrorbits.lineageos.org/full/panther/20261012/vendor_boot.img
+OTA=https://mirrorbits.lineageos.org/full/panther/20261012/lineage-24.0-20261012-nightly-panther-signed.zip
++ . base/urls.txt
+++ VENDOR_BOOT=https://mirrorbits.lineageos.org/full/panther/20261012/vendor_boot.img
+++ OTA=https://mirrorbits.lineageos.org/full/panther/20261012/lineage-24.0-20261012-nightly-panther-signed.zip
++ '[' -n https://mirrorbits.lineageos.org/full/panther/20261012/vendor_boot.img ']'
++ curl -fL https://mirrorbits.lineageos.org/full/panther/20261012/vendor_boot.img -o base/vendor_boot.img
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100   443  100   443    0     0    310      0  0:00:01  0:00:01 --:--:--   709
+  0     0    0     0    0     0      0      0 --:--:--  0:00:01 --:--:--     0  0 64.0M    0  289k    0     0   104k      0  0:10:30  0:00:02  0:10:28  322k  6 64.0M    6 4195k    0     0  1110k      0  0:00:59  0:00:03  0:00:56 2211k 59 64.0M   59 38.0M    0     0  8126k      0  0:00:08  0:00:04  0:00:04 13.0M100 64.0M  100 64.0M    0     0  12.7M      0  0:00:05  0:00:05 --:--:-- 20.3M
++ ls -l base/
+total 65556
+-rw-r--r-- 1 runner runner     6434 Oct 13 12:29 builds.json
+-rw-r--r-- 1 runner runner     2040 Oct 13 12:29 log.txt
+-rw-r--r-- 1 runner runner     3809 Oct 13 12:29 selected.json
+-rw-r--r-- 1 runner runner      191 Oct 13 12:29 urls.txt
+-rw-r--r-- 1 runner runner 67108864 Oct 13 12:29 vendor_boot.img
++ sha256sum base/vendor_boot.img
++ tee base/sha256.txt
+961e7c68d7ef9bc44fda1a8308aea87a583516219c2581faca3aba81fa877a5f  base/vendor_boot.img
