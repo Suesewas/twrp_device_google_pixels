@@ -1,0 +1,84 @@
+name: assemble
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: device codename
+        type: string
+        default: panther
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          path: pixels
+          fetch-depth: 1
+
+      - name: Assemble from stashed payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVICE: ${{ inputs.device }}
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p artifacts
+          PIXELS="$GITHUB_WORKSPACE/pixels"
+          REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git clone --depth 1 --branch assets "$REPO_URL" base 2>&1 | tail -2
+          git clone --depth 1 --branch ci-logs "$REPO_URL" stash 2>&1 | tail -2
+          BASE="$GITHUB_WORKSPACE/base/vendor_boot.img"
+          PAYLOAD="$GITHUB_WORKSPACE/stash/payload.ramdisk.lz4"
+          ls -l "$BASE" "$PAYLOAD" 2>&1
+          if [ ! -f "$BASE" ] || [ ! -f "$PAYLOAD" ]; then
+            echo "FATAL: base or payload missing"
+            exit 1
+          fi
+
+          INJECT=""
+          [ -f "$PIXELS/installer/modules/${DEVICE}.lgz" ] && INJECT="--inject-lgz $PIXELS/installer/modules/${DEVICE}.lgz"
+          chmod +x "$PIXELS/installer/bin/linux/install-linux-x86_64"
+          "$PIXELS/installer/bin/linux/install-linux-x86_64" install --file \
+            -i "$BASE" -c "$PAYLOAD" -o artifacts/vendor_boot.img \
+            --device "$DEVICE" $INJECT \
+            --partition-size 67108864 --min-free-mb 7 --log artifacts/assemble.log
+          rc=$?
+          echo "installer rc=$rc"
+          cat artifacts/assemble.log 2>/dev/null | tail -40
+          ls -l artifacts
+          [ -f artifacts/vendor_boot.img ] && sha256sum artifacts/vendor_boot.img | tee artifacts/vendor_boot.sha256
+          exit "$rc"
+
+      - name: Publish result to branch release
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          rm -rf rel && mkdir -p rel
+          cp -f artifacts/vendor_boot.img artifacts/*.sha256 artifacts/*.log rel/ 2>/dev/null
+          cd rel
+          git init -q
+          git checkout -qb release
+          git add -A
+          git -c user.name=ci -c user.email=ci@local commit -qm "vendor_boot ${GITHUB_RUN_ID}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release 2>&1 | tail -2
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vendor_boot-${{ inputs.device }}
+          path: artifacts/*
+          if-no-files-found: warn
+          retention-days: 14

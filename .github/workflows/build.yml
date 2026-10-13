@@ -141,26 +141,110 @@ jobs:
             -j$(nproc)
 
       - name: Assemble vendor_boot.img
+        if: always()
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEVICE: ${{ inputs.device }}
         run: |
+          set +e
           cd "$GITHUB_WORKSPACE"
           mkdir -p artifacts
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/vendor_boot.img?ref=assets" -o stock_vendor_boot.img
-          ls -l stock_vendor_boot.img
-          PIXELS="$GITHUB_WORKSPACE/fox_14.1/device/google/pixels"
-          PAYLOAD="$(ls -t "$GITHUB_WORKSPACE"/fox_14.1/builds/*.ramdisk.lz4 | head -1)"
+          TREE="$GITHUB_WORKSPACE/fox_14.1"
+          PIXELS="$TREE/device/google/pixels"
+          POUT="$TREE/out/target/product/pixels"
+          LOG="$GITHUB_WORKSPACE/artifacts/assemble-step.log"
+          exec > >(tee "$LOG") 2>&1
+
+          echo "=== builds dir ==="
+          ls -l "$TREE/builds" 2>&1
+          echo "=== product out (img/zip/lz4) ==="
+          find "$POUT" -maxdepth 1 \( -name 'OrangeFox-*' -o -name '*.lz4' -o -name '*.zip' \) -printf '%T@ %s %p\n' 2>&1 | sort -rn
+          echo "=== tools ==="
+          ls -l "$TREE/vendor/recovery/tools/magiskboot" "$TREE/vendor/recovery/tools/lz4" 2>&1
+          ls -l "$PIXELS/installer/bin/linux/install-linux-x86_64" 2>&1
+
+          echo "=== fetch stock base from branch assets ==="
+          rm -rf base
+          git clone --depth 1 --branch assets \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" base 2>&1 | tail -3
+          BASE="$GITHUB_WORKSPACE/base/vendor_boot.img"
+          ls -l "$BASE" 2>&1
+          if [ ! -f "$BASE" ]; then
+            echo "FATAL: stock base missing in branch assets"
+            exit 1
+          fi
+
+          echo "=== locate payload ==="
+          PAYLOAD="$(ls -t "$TREE"/builds/*.ramdisk.lz4 2>/dev/null | head -1)"
+          if [ -z "$PAYLOAD" ]; then
+            PAYLOAD="$(ls -t "$POUT"/*.ramdisk.lz4 2>/dev/null | head -1)"
+          fi
+          if [ -z "$PAYLOAD" ]; then
+            echo "no ramdisk.lz4 from build.sh, extracting from image"
+            IMG="$(ls -t "$POUT"/OrangeFox-*.img 2>/dev/null | head -1)"
+            MB="$TREE/vendor/recovery/tools/magiskboot"
+            LZ4="$TREE/vendor/recovery/tools/lz4"
+            echo "img: $IMG"
+            if [ -n "$IMG" ] && [ -x "$MB" ]; then
+              rm -rf unpack && mkdir -p unpack
+              ( cd unpack && "$MB" unpack "$IMG" ) 2>&1 | tail -5
+              find unpack -maxdepth 2 -type f -printf '%s %p\n' 2>&1
+              for f in unpack/vendor_ramdisk/ramdisk.cpio unpack/vendor_ramdisk_recovery.cpio unpack/ramdisk.cpio; do
+                if [ -f "$f" ]; then
+                  if [ -x "$LZ4" ]; then
+                    "$LZ4" -l -9 -f "$f" artifacts/payload.ramdisk.lz4
+                  else
+                    lz4 -l -9 -f "$f" artifacts/payload.ramdisk.lz4
+                  fi
+                  PAYLOAD="$GITHUB_WORKSPACE/artifacts/payload.ramdisk.lz4"
+                  break
+                fi
+              done
+            fi
+          fi
           echo "payload: $PAYLOAD"
+          if [ -z "$PAYLOAD" ] || [ ! -f "$PAYLOAD" ]; then
+            echo "FATAL: no recovery payload produced"
+            exit 1
+          fi
+          ls -l "$PAYLOAD"
+          cp -f "$PAYLOAD" artifacts/payload.ramdisk.lz4 2>/dev/null
+
+          echo "=== assemble ==="
           INJECT=""
           [ -f "$PIXELS/installer/modules/${DEVICE}.lgz" ] && INJECT="--inject-lgz $PIXELS/installer/modules/${DEVICE}.lgz"
+          chmod +x "$PIXELS/installer/bin/linux/install-linux-x86_64" 2>/dev/null
           "$PIXELS/installer/bin/linux/install-linux-x86_64" install --file \
-            -i stock_vendor_boot.img -c "$PAYLOAD" -o artifacts/vendor_boot.img \
+            -i "$BASE" -c "$PAYLOAD" -o artifacts/vendor_boot.img \
             --device "$DEVICE" $INJECT \
             --partition-size 67108864 --min-free-mb 7 --log artifacts/assemble.log
-          ls -l artifacts/vendor_boot.img
-          sha256sum artifacts/vendor_boot.img | tee artifacts/vendor_boot.sha256
+          rc=$?
+          echo "installer rc=$rc"
+          ls -l artifacts/ 2>&1
+          [ -f artifacts/vendor_boot.img ] && sha256sum artifacts/vendor_boot.img | tee artifacts/vendor_boot.sha256
+          exit "$rc"
+
+      - name: Publish payload and logs to branch ci-logs
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          rm -rf cilogs && mkdir -p cilogs
+          cp -f artifacts/*.log artifacts/*.sha256 cilogs/ 2>/dev/null
+          cp -f artifacts/payload.ramdisk.lz4 cilogs/ 2>/dev/null
+          find "$GITHUB_WORKSPACE/fox_14.1/builds" "$GITHUB_WORKSPACE/fox_14.1/out/target/product/pixels" \
+            -maxdepth 1 -printf '%s %p\n' > cilogs/manifest.txt 2>&1
+          find cilogs -type f -size +90M -print -delete
+          cd cilogs
+          git init -q
+          git checkout -qb ci-logs
+          git add -A
+          git -c user.name=ci -c user.email=ci@local commit -qm "run ${GITHUB_RUN_ID}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-logs 2>&1 | tail -2
 
       - name: Disk and ccache stats
         if: always()
