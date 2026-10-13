@@ -6,8 +6,8 @@
 //! transition, from the runatboot.sh delegation wrapper).
 
 use crate::config::{DeviceConfig, load_device_config_fallback};
-use crate::ko_picker::{is_module_loaded, load_kernel_module, log_msg, ko_try_load, score_candidate, detect_kernel_env};
-use crate::props::get_prop;
+use crate::ko_picker::{is_module_loaded, load_kernel_module, log_msg, ko_try_load, score_candidate, detect_kernel_env, find_candidates, load_kernel_module_force, record_loaded_module, is_module_recorded};
+use crate::props::{get_prop, set_prop};
 use crate::stage::{is_mounted, run_stage};
 use std::path::{Path, PathBuf};
 
@@ -103,12 +103,13 @@ fn load_staged(staged: &[PathBuf], modules: &[String]) -> Vec<String> {
                 (s, p)
             })
             .collect();
-        cands.sort_by(|a, b| b.0.cmp(&a.0));
+        cands.sort_by_key(|a| std::cmp::Reverse(a.0));
         let mut ok = is_module_loaded(&name);
         for (_, p) in &cands {
             match load_kernel_module(p) {
                 Ok(()) => {
                     info(&format!("modules: {module} loaded from {}", p.display()));
+                    record_loaded_module(&name);
                     ok = true;
                     break;
                 }
@@ -196,7 +197,186 @@ fn try_slot(part: &str, sfx: &str, slotnum: &str, modules: &[String]) -> bool {
     false
 }
 
-fn modules_touch_install(cfg: &DeviceConfig, suffix: &str, unsuffix: &str, slot: &str, unslot: &str) {
+/// Ramdisk prebuilt touch set (/system/lib64/modules/touch/...).
+/// Best score first (exact 6.1.<patch> snapshot wins, wrong patch stays a
+/// fallback), strict finit_module; on total strict failure one force pass
+/// over the best candidate (build-tag drift, e.g. stock-stamped .ko on a
+/// Wild kernel — field-proven safe inside 6.1.x, pagesize stays a hard
+/// filter). Every win is recorded, so dependent extras can gate on "touch
+/// already injected" via is_module_recorded() without re-scanning.
+/// Returns true when every wanted module is loaded afterwards.
+fn load_touch_prebuilt(modules: &[String]) -> bool {
+    const TOUCH_ROOT: &str = "/system/lib64/modules/touch";
+    let env = match detect_kernel_env() {
+        Ok(e) => e,
+        Err(e) => {
+            warn(&format!("touch prebuilt: detect_kernel_env failed: {e}"));
+            return false;
+        }
+    };
+    info(&format!(
+        "touch prebuilt: kernel {}.{}.{} pagesize={} api={}",
+        env.major, env.minor, env.patch, env.page_size, env.android_api
+    ));
+    let root = Path::new(TOUCH_ROOT);
+    let mut all_ok = true;
+    for module in modules {
+        let name = module.replace('-', "_");
+        if is_module_recorded(&name) {
+            info(&format!("touch prebuilt: {module} already injected, skipping"));
+            continue;
+        }
+        let cands = find_candidates(root, module, &env);
+        if cands.is_empty() {
+            info(&format!("touch prebuilt: no ramdisk candidate for {module}"));
+            all_ok = false;
+            continue;
+        }
+        let mut ok = false;
+        for cand in &cands {
+            match load_kernel_module(cand) {
+                Ok(()) => {
+                    info(&format!("touch prebuilt: {module} loaded from {}", cand.display()));
+                    record_loaded_module(&name);
+                    ok = true;
+                    break;
+                }
+                Err(e) => info(&format!("touch prebuilt: {} strict failed: {e}", cand.display())),
+            }
+        }
+        if !ok {
+            // Cross-version fallback within 6.1.x (wrong snapshot, same ABI).
+            warn(&format!("touch prebuilt: {module} strict failed everywhere, force-trying best"));
+            if let Some(best) = cands.first() {
+                match load_kernel_module_force(best) {
+                    Ok(()) => {
+                        warn(&format!("touch prebuilt: {module} FORCE-loaded from {}", best.display()));
+                        record_loaded_module(&name);
+                        ok = true;
+                    }
+                    Err(e) => error(&format!("touch prebuilt: {module} force failed: {e}")),
+                }
+            }
+        }
+        all_ok &= ok;
+    }
+    all_ok
+}
+
+/// Total touch failure: raise the flag the GUI loop polls (see the
+/// `fox.force_hw_gui` hook in bootable/recovery/gui/gui.cpp runPages).
+/// The GUI switches to hardware-key control itself and shows the
+/// dialog_enable_hw_mode modal — the user keeps full control with
+/// VOL+/VOL-/POWER, no touch needed. setprop (not `twrp set` over the ORS
+/// FIFO: that blocks until the GUI loop services it, exactly what a
+/// touch-dead boot cannot rely on).
+fn force_hw_gui_fallback() {
+    error("touch FAILED on every source (ramdisk prebuilt + system); forcing HW GUI mode");
+    match set_prop("fox.force_hw_gui", "1") {
+        Ok(()) => error("fox.force_hw_gui=1 raised, GUI will switch to hardware keys + modal"),
+        Err(e) => error(&format!("fox.force_hw_gui setprop FAILED: {e}")),
+    }
+}
+
+/// Unpack the per-device touch archive (`/<code>.lgz` from the recovery
+/// payload) to / — populates
+/// /system/lib64/modules/touch for the OFOX fallback below.
+/// No-op without the section (normal boot, old installs). Best-effort.
+fn touch_unpack(code: &str) {
+    if !Path::new(&format!("/{code}.lgz")).exists() {
+        info(&format!("touch section: /{code}.lgz absent, skipping unpack"));
+        return;
+    }
+    match run_stage("touch-unpack", &[code]) {
+        Ok(o) => info(&format!("touch section: unpacked /{code}.lgz ({o})")),
+        Err(e) => warn(&format!("touch section: unpack failed: {e}")),
+    }
+}
+
+/// Delete every .ko under `root` whose module is NOT in use.
+/// Directories (structure), non-.ko files and the used set stay.
+/// Returns (kept, removed, freed_bytes). Best-effort: unlink errors are
+/// counted, never fatal. Pure over `root` (testable).
+fn prune_touch_dir(root: &Path, used: &dyn Fn(&str) -> bool) -> (usize, usize, u64) {
+    fn norm(name: &str) -> String {
+        name.trim_end_matches(".ko").replace('-', "_")
+    }
+    fn visit(dir: &Path, used: &dyn Fn(&str) -> bool, acc: &mut (usize, usize, u64)) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                visit(&p, used, acc);
+                continue;
+            }
+            if p.extension().and_then(|e| e.to_str()) != Some("ko") {
+                acc.0 += 1;
+                continue;
+            }
+            let stem = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if used(&norm(stem)) {
+                acc.0 += 1;
+                continue;
+            }
+            let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(&p).is_ok() {
+                acc.1 += 1;
+                acc.2 += bytes;
+            } else {
+                acc.0 += 1;
+            }
+        }
+    }
+    let mut acc = (0, 0, 0);
+    visit(root, used, &mut acc);
+    acc
+}
+
+/// RAM diet for recovery: drop unpacked touch modules that this boot did
+/// NOT inject (wrong kernel snapshots — the bulk of the lgz), keeping the
+/// loaded set and the /<code>.lgz archive itself (reflash re-appends the
+/// live lgz to its manifest; without it the next reflash would silently
+/// lose the touch package). Directories stay, like the build-time prune.
+fn prune_touch_modules() {
+    const TOUCH_ROOT: &str = "/system/lib64/modules/touch";
+    if !Path::new(TOUCH_ROOT).exists() {
+        return;
+    }
+    let used = |normed: &str| {
+        let n = normed.to_string();
+        is_module_loaded(&n) || is_module_recorded(&n)
+    };
+    let (kept, removed, freed) = prune_touch_dir(Path::new(TOUCH_ROOT), &used);
+    if removed > 0 {
+        info(&format!("touch prune: kept {kept}, removed {removed} unused .ko (freed {} bytes)", freed));
+    } else {
+        info(&format!("touch prune: nothing unused ({kept} kept)"));
+    }
+}
+
+fn modules_touch_install(cfg: &DeviceConfig, code: &str, suffix: &str, unsuffix: &str, slot: &str, unslot: &str) {
+    let want = !cfg.touch_modules.is_empty();
+    // Full fallback fork for monolithic kernels (CONFIG_MODULES=n):
+    // every driver is built in, there is nothing to inject and no
+    // failure to report — in particular, never the HW GUI fallback.
+    if !crate::ko_picker::modules_supported() {
+        info("modules: monolithic kernel (/proc/modules absent), touch drivers are built in");
+        prune_touch_modules();
+        if let Err(e) = crate::temp::run_setup_temp() {
+            warn(&format!("thermal refresh failed: {e}"));
+        }
+        return;
+    }
+    // 0. Device touch section first: /<code>.lgz -> / populates the OFOX
+    // prebuilt dir for step 2. No-op without the section.
+    if want {
+        touch_unpack(code);
+    }
+    // 1. Stock modules from firmware images (preload/current/opposite
+    // slot/fallback). Fast no-op when first-stage already autoloaded them.
     let sfx = suffix.trim_start_matches('_');
     let usfx = unsuffix.trim_start_matches('_');
     // Provider preload (dependency order): e.g. pwrseq-core from system_dlkm
@@ -229,9 +409,19 @@ fn modules_touch_install(cfg: &DeviceConfig, suffix: &str, unsuffix: &str, slot:
         }
         let _ = load_staged(&staged, &cfg.touch_modules);
     }
-    if !check_modules_loaded(&cfg.touch_modules) {
-        error("modules: final failure, still missing");
+    // 2. OFOX-supplied set for this kernel snapshot (only what stock
+    // missed; already-injected modules are skipped via the record).
+    if want {
+        load_touch_prebuilt(&cfg.touch_modules);
     }
+    // 3. Verdict: total miss on every source forces HW GUI mode.
+    if want && !check_modules_loaded(&cfg.touch_modules) {
+        error("modules: final failure, still missing");
+        force_hw_gui_fallback();
+    }
+    // 4. RAM diet: drop unpacked snapshots this boot did not inject.
+    // The /<code>.lgz archive itself stays (reflash re-appends it).
+    prune_touch_modules();
     // Re-resolve the thermal symlink: zone topology may have changed now
     // that vendor_dlkm drivers are loaded (early on-init scan predates them).
     // Idempotent (rm + symlink), best-effort.
@@ -397,7 +587,7 @@ pub fn run_boot() -> Result<(), String> {
             warn("vendor_fw: firmware fetch failed on all slots");
         }
 
-        modules_touch_install(&cfg, &suffix, &unsuffix, &slot, &unslot);
+        modules_touch_install(&cfg, &device_code, &suffix, &unsuffix, &slot, &unslot);
 
         let pm = cfg.cs40l26_pm.as_str();
         if !pm.is_empty() && Path::new(pm).exists() {
@@ -476,6 +666,28 @@ pub fn run_boot() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn prune_keeps_used_and_structure() {
+        let d = std::env::temp_dir().join(format!("fox_test_prune_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let v1 = d.join("6.1/157/android14/4k");
+        let v0 = d.join("6.1/145/android14/4k");
+        std::fs::create_dir_all(&v1).unwrap();
+        std::fs::create_dir_all(&v0).unwrap();
+        std::fs::write(v1.join("goodix-brl-touch.ko"), vec![0u8; 100]).unwrap();
+        std::fs::write(v1.join("stale.ko"), vec![0u8; 200]).unwrap();
+        std::fs::write(v0.join("goodix-brl-touch.ko"), vec![0u8; 400]).unwrap();
+        std::fs::write(d.join("README"), b"doc").unwrap();
+        // Dash/underscore unify through norm(): the used set holds one stem.
+        let (kept, removed, freed) = prune_touch_dir(&d, &|n| n == "goodix_brl_touch");
+        assert_eq!((kept, removed, freed), (3, 1, 200));
+        assert!(v1.join("goodix-brl-touch.ko").exists());
+        assert!(v0.join("goodix-brl-touch.ko").exists());
+        assert!(!v1.join("stale.ko").exists());
+        assert!(d.join("README").exists());
+        assert!(v1.is_dir() && v0.is_dir(), "directories stay");
+        let _ = std::fs::remove_dir_all(&d);
+    }
     #[test]
     fn touch_matrix_spot_check() {
         // Module lists now come from /pixelrunatboot.json, not code.

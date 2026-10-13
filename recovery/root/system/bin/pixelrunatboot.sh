@@ -8,7 +8,7 @@
 #   stdout, diagnostics to /tmp/recovery.log, success = exit 0.
 #
 #   Stages: props-apply | slot-detect | ko-fetch | fw-fetch |
-#           magiskboot-unpack | meta-fix
+#           magiskboot-unpack | meta-fix | touch-unpack
 #
 
 LOGF="/tmp/recovery.log"
@@ -539,8 +539,25 @@ case "$1" in
         plog "meta-fix" "done"
         ;;
 
+    touch-unpack)
+        # touch-unpack <codename>: /<codename>.lgz (the per-device touch
+        # archive from the recovery payload) -> / — populates /system/lib64/modules/touch
+        # for the OFOX module fallback. Absent file = normal boot or an
+        # install without the section: success with a note, never fatal.
+        _code="$2"
+        case "$_code" in ''|*/*) plog "touch-unpack" "bad codename"; exit 1 ;; esac
+        [ -f "/$_code.lgz" ] || { echo "absent"; exit 0; }
+        if [ -x /system/bin/lgz ] && /system/bin/lgz decompress "/$_code.lgz" / >>"$LOGF" 2>&1; then
+            plog "touch-unpack" "$_code.lgz unpacked to /"
+            echo "unpacked"
+        else
+            plog "touch-unpack" "decompress failed for $_code.lgz"
+            exit 1
+        fi
+        ;;
+
     *)
-        echo "usage: $0 {props-apply|slot-detect|ko-fetch|fw-fetch|magiskboot-unpack|meta-fix}" >&2
+        echo "usage: $0 {props-apply|slot-detect|ko-fetch|fw-fetch|magiskboot-unpack|meta-fix|touch-unpack}" >&2
         exit 2
         ;;
 esac

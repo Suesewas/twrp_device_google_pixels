@@ -1,0 +1,31 @@
+touch/ — per-device touch-driver harvest (LOCAL ONLY, gitignored).
+
+Layout (single level — no double `touch/touch`):
+
+  touch/<device>/<maj.min>/<patch>/android<XX>/<4k|16k>/
+    <mod>_android<XX>-<maj.min>.<patch>_<4k|16k>.ko
+
+Example:
+
+  touch/shiba/6.1/157/android14/4k/goodix_brl_touch_android14-6.1.157_4k.ko
+
+Flow (see fox_build_callback.sh build_device_touch_cpios):
+- The harvest lives HERE, in the source tree (put there by hand from
+  tools/unpack_modules or tools/extract_touch_modules.py --out).
+- At build time (--second-call, BEFORE the LGZ pack and manifest
+  generation) the callback packs installer/modules/<device>.lgz
+  (root-relative system/lib64/modules/touch/... paths) straight from
+  the recovery ramdisk copy ($TARGET_DIR/.../touch/<device>), then
+  deletes the packed files from the ramdisk (directories stay) so
+  they never enter the cluster, the snapshot manifest, the file
+  lists, or the image.
+- At install time the matching lgz is pushed INTO the recovery
+  payload (--inject-lgz); at boot the touch-unpack stage extracts
+  /<device>.lgz to /.
+
+Rules:
+- One directory per device, any kernel snapshots inside (5.10/5.15/
+  6.1/6.6 — the loader scores the closest, cross-loads inside 6.1.x).
+- <pagesize> is 4k or 16k and is a HARD filter (never cross-loads).
+- NEVER commit harvested .ko files (see .gitignore): only this
+  README is tracked.

@@ -554,7 +554,7 @@ mod tests {
         std::fs::write(d.join("recovery.fstab"), b"# AIO LIVE placeholder\n").unwrap();
         std::fs::write(d.join("recovery.fstab.zuma"), b"REAL-KIT").unwrap();
         assert_eq!(swap_one_file(&d, "recovery.fstab", "zuma"), "swapped");
-        assert_eq!(std::fs::read(&d.join("recovery.fstab")).unwrap(), b"REAL-KIT");
+        assert_eq!(std::fs::read(d.join("recovery.fstab")).unwrap(), b"REAL-KIT");
         // Second pass is a no-op.
         assert_eq!(swap_one_file(&d, "recovery.fstab", "zuma"), "already-swapped");
         // Missing kit keeps the placeholder.
@@ -571,7 +571,7 @@ mod tests {
         std::fs::write(d.join("twrp.flags"), b"FAMILY").unwrap();
         std::fs::write(d.join("shiba.twrp.flags"), b"DEVICE").unwrap();
         assert!(swap_device_flags(&d, "shiba"));
-        assert_eq!(std::fs::read(&d.join("twrp.flags")).unwrap(), b"DEVICE");
+        assert_eq!(std::fs::read(d.join("twrp.flags")).unwrap(), b"DEVICE");
         assert!(!swap_device_flags(&d, "husky"));
         assert!(!swap_device_flags(&d, ""));
         let _ = std::fs::remove_dir_all(&d);
@@ -614,9 +614,11 @@ mod tests {
     #[test]
     fn fold_display_pick() {
         use crate::config::{DeviceConfig, DisplayGeom};
-        let mut cfg = DeviceConfig::default();
-        cfg.front_display = DisplayGeom { w: 1080, h: 2424 };
-        cfg.progressive_scale = 0;
+        let mut cfg = DeviceConfig {
+            front_display: DisplayGeom { w: 1080, h: 2424 },
+            progressive_scale: 0,
+            ..Default::default()
+        };
         cfg.inner_progressive_scale = 1;
         cfg.wide_theme = String::new();
         cfg.inner_theme = String::from("twres_2076");
