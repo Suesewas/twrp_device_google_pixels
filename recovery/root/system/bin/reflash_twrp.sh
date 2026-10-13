@@ -11,10 +11,14 @@
 #   2. backup snapshots -> /sdcard/backup_vendor_boot/ (best effort;
 #      install proceeds without backup when userdata is unwritable)
 #   3. build a recovery-ONLY cpio payload from /ramdisk_snapshot
-#      (no first_stage paths, no first_stage lists) and rebuild
-#      each slot image with it via `bootsmasher-install install --file` —
-#      first_stage, header, cmdline and dtb come from each slot's own
-#      stock image ("smart replace", same binary as the installer uses)
+#      (no first_stage paths, no first_stage lists; *.lgz from the
+#      build-time list is dropped — the cluster is force-kept below)
+#      plus the live per-device touch archive (/<device>.lgz, appended
+#      to the manifest when present so cpio packs it back in), then
+#      rebuild each slot image with it via
+#      `bootsmasher-install install --file` — first_stage, header,
+#      cmdline and dtb come from each slot's own stock image
+#      ("smart replace", same binary as the installer uses).
 #   4. enforce MIN_FREE_MB policy, flash both slots, fetch-back verify
 #
 # stdout is captured by twrpRepacker and displayed in the recovery UI.
@@ -149,9 +153,13 @@ fi
 # Entries absent from the snapshot (LGZ-packed, live only after unpack)
 # are skipped here — the cluster inside the payload restores them.
 echo "- Building recovery-only payload from snapshot..."
+# Root-level *.lgz never comes from the build-time list: the cluster is
+# force-kept below (restores packed files at next boot); any other lgz
+# in the list would be stale build residue — drop it here.
 grep -v -e "^first_stage_ramdisk" -e "first_stage_ramdisk/" \
         -e "^ramdisk-files.txt$" \
         -e "^first_stage-ramdisk-files.txt$" -e "^first_stage_file_list.txt$" \
+        -e '\.lgz$' \
     "$RECOVERY_LIST" > "$FOLDER/payload_list_full.txt" \
     || _die "Cannot write payload list"
 if grep -q "first_stage_ramdisk" "$FOLDER/payload_list_full.txt"; then
@@ -168,19 +176,45 @@ while IFS= read -r _f; do
 done < "$FOLDER/payload_list_full.txt"
 
 cd "$SNAP" || _die "Cannot cd to $SNAP"
-# Self-containment: the payload must carry the snapshot machinery itself
-# (manifest + file lists), otherwise the reflashed image can never
-# re-snapshot and every later reflash dies with "snapshot not found".
+# Self-containment: the payload must carry the LGZ cluster (all packed
+# files — binaries/libs/toybox — without it the reflashed image misses
+# them at the next boot) plus the snapshot machinery itself (manifest +
+# file lists), otherwise the reflashed image can never re-snapshot and
+# every later reflash dies with "snapshot not found".
 # recovery_file_list.txt predates these files, so append them here from
 # the snapshot (present: the manifest find that built the snapshot runs
-# after the lists exist, so the snapshot always contains them).
-for _keep in ramdisk_snapshot_manifest.txt recovery_file_list.txt first_stage_file_list.txt; do
+# after the lists exist, so the snapshot always contains them; the
+# cluster file persists at the ramdisk root).
+for _keep in lgz_cluster.lgz ramdisk_snapshot_manifest.txt recovery_file_list.txt first_stage_file_list.txt; do
     if { [ -e "$SNAP/$_keep" ] || [ -L "$SNAP/$_keep" ]; } \
         && ! grep -qx "$_keep" "$FOLDER/payload_list.txt" 2>/dev/null; then
         printf '%s\n' "$_keep" >> "$FOLDER/payload_list.txt"
         _log "payload: keep snapshot machinery: $_keep"
     fi
 done
+# Per-device touch archive back into the payload: the live /<device>.lgz
+# (unpacked from the installer payload at boot) is copied into the
+# snapshot dir and appended to the manifest, so cpio packs it back in
+# next to everything else. Absent = install without the archive:
+# warn and proceed (stock touch path + HW GUI fallback cover it).
+_RDEV="$(getprop ro.product.device 2>/dev/null | tr -d '\r')"
+[ -n "$_RDEV" ] || _RDEV="$(getprop ro.build.product 2>/dev/null | tr -d '\r')"
+_RDEV_ARGS=""
+if [ -n "$_RDEV" ]; then
+    _RDEV_ARGS="--device $_RDEV"
+    if [ -f "/$_RDEV.lgz" ]; then
+        cp -f "/$_RDEV.lgz" "$SNAP/$_RDEV.lgz" 2>>"$LOGF" \
+            || _die "cannot stage live touch archive /$_RDEV.lgz"
+        printf '%s\n' "$_RDEV.lgz" >> "$FOLDER/payload_list.txt"
+        _log "payload: keep live touch archive: $_RDEV.lgz"
+    else
+        echo "- WARNING: no live /$_RDEV.lgz, reflashing without touch archive"
+        _log "WARNING: /$_RDEV.lgz absent, payload has no touch archive"
+    fi
+else
+    echo "- WARNING: cannot detect device codename, reflashing without touch archive"
+    _log "WARNING: empty device codename, no --device/touch archive"
+fi
 cpio -H newc -o < "$FOLDER/payload_list.txt" > "$FOLDER/payload.cpio" 2>>"$LOGF" \
     || _die "cpio failed building recovery payload"
 [ -s "$FOLDER/payload.cpio" ] || _die "payload.cpio is empty after cpio"
@@ -188,9 +222,14 @@ _log "payload.cpio size=$(stat -c %s "$FOLDER/payload.cpio" 2>/dev/null) bytes"
 
 echo "- Rebuilding slot images (smart replace, stock first_stage kept)..."
 for s in a b; do
+    if [ "$s" = "a" ]; then _dev="$DEV_A"; else _dev="$DEV_B"; fi
+    _psz="$(blockdev --getsize64 "$_dev" 2>/dev/null | tr -d ' \r\n')"
+    case "$_psz" in ''|*[!0-9]*) _psz="$(wc -c < "$FOLDER/vendor_boot_${s}_orig.img" | tr -d ' ')";; esac
+    # shellcheck disable=SC2086 (flag args are pre-split intentionally)
     "$INST_BIN" install --file -i "$FOLDER/vendor_boot_${s}_orig.img" \
         -c "$FOLDER/payload.cpio" -o "$FOLDER/recovery_${s}.img" \
-        --log "$FOLDER/install-${s}.log" >>"$LOGF" 2>&1 \
+        --log "$FOLDER/install-${s}.log" $_RDEV_ARGS \
+        --partition-size "$_psz" --min-free-mb "$MIN_FREE_MB" >>"$LOGF" 2>&1 \
         || _die "rebuild slot $s failed (see $FOLDER/install-${s}.log)"
     _log "rebuild slot $s OK"
 done

@@ -8,7 +8,9 @@
 #      /data/media/0/backup_vendor_boot/ when userdata is writable;
 #      skipped otherwise, install proceeds)
 #   3. rebuild each snapshot with the payload via
-#      `install --file` (verify in, rebuild, verify out)
+#      `install --file` (verify in, rebuild, verify out) + the
+#      per-device touch archive (modules/<codename>.lgz next to this
+#      script -> injected into the recovery payload at its root)
 #   4. set the blocks writable (blockdev --setrw, best effort),
 #      dd the rebuilt images back, re-read + byte-compare proof
 #
@@ -46,6 +48,28 @@ PAYLOAD="$ROOT/$PAYLOAD_NAME"
 MIN_FREE_MB="$(cfg MIN_FREE_MB)"; [ -n "$MIN_FREE_MB" ] || MIN_FREE_MB=7
 case "$MIN_FREE_MB" in ''|*[!0-9]*|'0') echo "bad MIN_FREE_MB in export.txt: '$MIN_FREE_MB' (want positive MiB integer)"; exit 1;; esac
 MIN_FREE_BYTES=$(( MIN_FREE_MB * 1048576 ))
+
+# --- device: codename for pool validation + touch-section selection ---
+# getprop works in booted Android and in recovery. Empty = proceed legacy
+# (no --device, no touch section); a codename outside the Pixel pool fails
+# inside the binary with exit 1. Remembered: codename -> $TMPDIR/device.txt.
+DEVICE="$(getprop ro.product.device 2>/dev/null | tr -d '\r' | sed 's/^ *//;s/ *$//')"
+[ -n "$DEVICE" ] || DEVICE="$(getprop ro.build.product 2>/dev/null | tr -d '\r' | sed 's/^ *//;s/ *$//')"
+DEVICE_ARGS=""
+INJECT_ARGS=""
+if [ -n "$DEVICE" ]; then
+    DEVICE_ARGS="--device $DEVICE"
+    MODULES_DIR="$(cfg MODULES_DIR)"; [ -n "$MODULES_DIR" ] || MODULES_DIR="modules"
+    _lgz="$ROOT/$MODULES_DIR/$DEVICE.lgz"
+    if [ -f "$_lgz" ]; then
+        INJECT_ARGS="--inject-lgz $_lgz"
+        say "  touch archive: $MODULES_DIR/$DEVICE.lgz -> payload root"
+    else
+        say "  WARNING: no $MODULES_DIR/$DEVICE.lgz next to installer, installing without touch archive"
+    fi
+else
+    say "  WARNING: cannot detect device codename (getprop empty), installing without --device/touch archive"
+fi
 
 # --- binary: small build first, by uname -m ---
 ARCH=""
@@ -222,11 +246,17 @@ case "$_RIP_VAL" in
     *) fail "bad RECOVERY_IS_PLATFORM in export.txt: '$_RIP_VAL' (want empty|var1|var2)" ;;
 esac
 for s in $SLOTS; do
+    _blk="$BYNAME/vendor_boot_$s"
+    _psz="$(blockdev --getsize64 "$_blk" 2>/dev/null | tr -d ' \r\n')"
+    case "$_psz" in ''|*[!0-9]*) _psz="$(wc -c < "$TMPDIR/vendor_boot_${s}_orig.img" | tr -d ' ')";; esac
+    # shellcheck disable=SC2086 (flag args are pre-split intentionally)
     "$BIN" install --file -i "$TMPDIR/vendor_boot_${s}_orig.img" -c "$PAYLOAD" \
-        -o "$TMPDIR/recovery_${s}.img" --log "$TMPDIR/install-${s}.log" $RIP_ARGS >>"$LOG" 2>&1 \
+        -o "$TMPDIR/recovery_${s}.img" --log "$TMPDIR/install-${s}.log" $RIP_ARGS \
+        $DEVICE_ARGS $INJECT_ARGS --partition-size "$_psz" --min-free-mb "$MIN_FREE_MB" >>"$LOG" 2>&1 \
         || fail "rebuild slot $s (see $TMPDIR/install-${s}.log)"
     say "  ok: slot $s rebuilt ($(wc -c < "$TMPDIR/recovery_${s}.img" | tr -d ' ') bytes)"
 done
+[ -n "$DEVICE" ] && echo "$DEVICE" > "$TMPDIR/device.txt" 2>/dev/null || true
 
 # --- free-space policy (export MIN_FREE_MB, strict: no bypass) ---
 say ""
