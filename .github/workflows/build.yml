@@ -1,0 +1,135 @@
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: FOX_BUILD_TYPE
+        type: choice
+        default: Stable
+        options: [Stable, Beta]
+      tag:
+        description: build name tag (-n)
+        type: string
+        default: ci
+      lgz_level:
+        description: LGZ compression level (-l 0..3)
+        type: choice
+        default: '0'
+        options: ['0', '1', '2', '3']
+      snapshot_upstream:
+        description: push bootable/recovery + vendor/recovery into branch upstream-snapshot
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write
+    steps:
+      - name: Free disk space
+        uses: rokibhasansagar/slimhub_actions@main
+
+      - name: Swap space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 24
+
+      - name: Android build environment
+        run: |
+          sudo apt-get update
+          git clone --depth 1 https://gitlab.com/OrangeFox/misc/scripts ofox-scripts
+          sudo bash ofox-scripts/setup/android_build_env.sh
+          df -h /
+
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          path: pixels
+          fetch-depth: 1
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ github.ref_name }}-
+            ccache-
+
+      - name: Sync OrangeFox 14.1
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@local"
+          git config --global color.ui false
+          git clone --depth 1 https://gitlab.com/OrangeFox/sync.git ofox-sync
+          cd ofox-sync
+          ./orangefox_sync.sh --branch 14.1 --path "$GITHUB_WORKSPACE/fox_14.1"
+          df -h /
+
+      - name: Place device tree
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/fox_14.1/device/google"
+          rm -rf "$GITHUB_WORKSPACE/fox_14.1/device/google/pixels"
+          mv "$GITHUB_WORKSPACE/pixels" "$GITHUB_WORKSPACE/fox_14.1/device/google/pixels"
+
+      - name: Snapshot upstream sources
+        if: ${{ inputs.snapshot_upstream }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          rm -rf snap
+          mkdir -p snap/bootable snap/vendor
+          rsync -a --exclude '.git' fox_14.1/bootable/recovery/ snap/bootable/recovery/
+          rsync -a --exclude '.git' fox_14.1/vendor/recovery/ snap/vendor/recovery/
+          find snap -type f -size +95M -print -delete
+          du -sh snap/bootable/recovery snap/vendor/recovery
+          cd snap
+          git init -q
+          git checkout -qb upstream-snapshot
+          git add -A
+          git -c user.name=ci -c user.email=ci@local commit -qm "upstream snapshot $(date -u +%F)"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" upstream-snapshot
+          cd "$GITHUB_WORKSPACE"
+          rm -rf snap
+
+      - name: Build
+        run: |
+          cd "$GITHUB_WORKSPACE/fox_14.1"
+          export USE_CCACHE=1
+          export CCACHE_DIR="$HOME/.ccache"
+          export CCACHE_EXEC=$(command -v ccache)
+          ccache -M 8G
+          export ALLOW_MISSING_DEPENDENCIES=true
+          ./device/google/pixels/build.sh \
+            -n "${{ inputs.tag }}" \
+            --build-type "${{ inputs.build_type }}" \
+            -l "${{ inputs.lgz_level }}" \
+            -j$(nproc)
+
+      - name: Disk and ccache stats
+        if: always()
+        run: |
+          df -h /
+          ccache -s || true
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp -f "$GITHUB_WORKSPACE"/fox_14.1/builds/* "$GITHUB_WORKSPACE/artifacts/" 2>/dev/null || true
+          cp -f "$GITHUB_WORKSPACE"/fox_14.1/out/target/product/pixels/OrangeFox*.img "$GITHUB_WORKSPACE/artifacts/" 2>/dev/null || true
+          cp -f "$GITHUB_WORKSPACE"/fox_14.1/out/target/product/pixels/*.ramdisk.lz4 "$GITHUB_WORKSPACE/artifacts/" 2>/dev/null || true
+          ls -l "$GITHUB_WORKSPACE/artifacts" || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-${{ inputs.tag }}-${{ inputs.build_type }}
+          path: artifacts/*
+          if-no-files-found: warn
+          retention-days: 14
