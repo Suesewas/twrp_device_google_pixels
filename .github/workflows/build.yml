@@ -64,8 +64,10 @@ jobs:
             ccache-
 
       - name: Sync OrangeFox 14.1
-        timeout-minutes: 90
+        timeout-minutes: 180
+        shell: bash
         run: |
+          set +e
           git config --global user.name "ci"
           git config --global user.email "ci@local"
           git config --global color.ui false
@@ -78,18 +80,24 @@ jobs:
             echo "=== sync attempt $i ==="
             if [ -d "$TREE/.repo" ]; then
               cd "$TREE"
-              timeout 25m repo sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)" --fail-fast
+              timeout 35m repo sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
               rc=$?
             else
               cd "$GITHUB_WORKSPACE/ofox-sync"
-              timeout 25m ./orangefox_sync.sh --branch 14.1 --path "$TREE"
+              timeout 35m ./orangefox_sync.sh --branch 14.1 --path "$TREE"
               rc=$?
             fi
-            echo "attempt $i rc=$rc"
-            [ $rc -eq 0 ] && break
+            echo "=== attempt $i finished rc=$rc ==="
+            df -h / | tail -1
+            if [ "$rc" -eq 0 ]; then
+              break
+            fi
           done
-          df -h /
-          [ $rc -eq 0 ] || exit $rc
+          echo "=== sync done rc=$rc ==="
+          ls -d "$TREE/bootable/recovery" "$TREE/vendor/recovery" "$TREE/build/envsetup.sh" 2>&1
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
 
       - name: Place device tree
         run: |
