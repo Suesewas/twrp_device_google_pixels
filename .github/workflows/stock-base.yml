@@ -1,0 +1,86 @@
+name: stock-base
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: LineageOS device codename
+        type: string
+        default: panther
+      build_date:
+        description: build date YYYYMMDD (empty = latest)
+        type: string
+        default: '20261012'
+
+jobs:
+  base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch stock vendor_boot
+        env:
+          DEVICE: ${{ inputs.device }}
+          BUILD_DATE: ${{ inputs.build_date }}
+        run: |
+          set -x
+          mkdir -p base
+          exec > >(tee base/log.txt) 2>&1
+          curl -fsSL "https://download.lineageos.org/api/v2/devices/${DEVICE}/builds" -o base/builds.json
+          python3 - <<'PY'
+          import json, os
+          d = json.load(open('base/builds.json'))
+          want = os.environ.get('BUILD_DATE') or ''
+          builds = d if isinstance(d, list) else d.get('builds', [])
+          sel = None
+          for b in builds:
+              dt = str(b.get('datetime') or b.get('date') or '')
+              ver = b.get('version')
+              files = b.get('files', [])
+              names = [f.get('filename') or f.get('filepath') for f in files]
+              print('BUILD', dt, ver, names)
+              if want and want in ''.join(n or '' for n in names):
+                  sel = b
+          if sel is None and builds:
+              sel = builds[-1]
+          json.dump(sel, open('base/selected.json', 'w'), indent=2)
+          url = None
+          for f in sel.get('files', []):
+              n = (f.get('filename') or f.get('filepath') or '')
+              if 'vendor_boot' in n:
+                  url = f.get('url')
+          ota = None
+          for f in sel.get('files', []):
+              n = (f.get('filename') or f.get('filepath') or '')
+              if n.endswith('.zip'):
+                  ota = f.get('url')
+          open('base/urls.txt','w').write(f"VENDOR_BOOT={url or ''}\nOTA={ota or ''}\n")
+          PY
+          cat base/urls.txt
+          . base/urls.txt
+          if [ -n "$VENDOR_BOOT" ]; then
+            curl -fL "$VENDOR_BOOT" -o base/vendor_boot.img
+          else
+            curl -fL "$OTA" -o ota.zip
+            curl -fsSL -o pdg.tar.gz https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
+            tar xf pdg.tar.gz
+            unzip -o ota.zip payload.bin
+            ./payload-dumper-go -p vendor_boot -o . payload.bin
+            mv -f vendor_boot.img base/vendor_boot.img
+            rm -f ota.zip payload.bin
+          fi
+          ls -l base/
+          sha256sum base/vendor_boot.img | tee base/sha256.txt
+
+      - name: Push base to branch assets
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd base
+          git init -q
+          git checkout -qb assets
+          git add -A
+          git -c user.name=ci -c user.email=ci@local commit -qm "stock base ${{ inputs.device }} ${{ inputs.build_date }}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" assets
