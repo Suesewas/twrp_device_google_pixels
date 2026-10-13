@@ -811,6 +811,24 @@ static int runPages(const char *page_name, const int stop_on_page_done)
 		}
 
 		blankTimer.checkForTimeout();
+		// Fox (touch fallback): the out-of-process touch loader
+		// (recovery-pixel-boot) cannot DataManager::SetValue in-process, so
+		// on total touch failure it raises the `fox.force_hw_gui` property
+		// instead. Poll it here — in-loop and throttled — so both orders work
+		// (loader done before GUI start, or GUI up long before the loader
+		// gives up). One-shot: the property is cleared before switching, and
+		// an already-enabled hw mode is never toggled back off. Enabling
+		// shows the dialog_enable_hw_mode modal (see gui_switchControlMode).
+		{
+			static unsigned fox_hw_gui_tick = 0;
+			if ((++fox_hw_gui_tick % 30) == 0
+				&& android::base::GetProperty("fox.force_hw_gui", "") == "1"
+				&& DataManager::GetStrValue("of_hw_control_mode") != "1") {
+				android::base::SetProperty("fox.force_hw_gui", "0");
+				LOGINFO("Fox: touch modules failed to load, forcing HW control mode\n");
+				gui_switchControlMode();
+			}
+		}
 		if (stop_on_page_done && DataManager::GetIntValue("tw_page_done") != 0)
 		{
 			gui_changePage("main");
