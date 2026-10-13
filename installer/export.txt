@@ -18,6 +18,11 @@
 # the installer binaries.
 
 RECOVERY_IMG=OrangeFox-R12.0-test7.1-aio.ramdisk.lz4
+# Per-device touch archives (<device>.lgz), relative to the directory
+# holding THIS file. install-recovery.sh pushes the matching one into
+# the recovery payload (--inject-lgz); absent dir/file = install
+# without the touch archive (stock touch path + HW GUI fallback).
+MODULES_DIR=modules
 BACKUP_DIR=backup
 # Per-run logs live apart from image backups: logs/<datetime>/install.log.
 LOG_DIR=logs

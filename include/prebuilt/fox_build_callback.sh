@@ -173,6 +173,11 @@ LGZ_EXCLUDE_LIST=(
     "ramdisk_snapshot_manifest.txt"
     "recovery_file_list.txt"
     "first_stage_file_list.txt"
+    # touch module dir: runtime-populated from the per-device
+    # <codename>.lgz (installer pushes it into the recovery payload).
+    # Never baked into the universal image — not even the
+    # .keep/README placeholders.
+    "system/lib64/modules/touch/"
 )
 
 # Pack policy: dirs (default, V9-verified set) or all (legacy experimental).
@@ -427,6 +432,103 @@ lgz_manifest_entry() {
     local mode
     mode=$(stat -c%a "$filepath" 2>/dev/null || echo "644")
     echo "$kind $relpath $mode 0:0 -"
+}
+
+# Per-device touch archives for the AIO installer.
+#
+# Input : $TARGET_DIR/system/lib64/modules/touch/<device>/<maj.min>/...
+#         (local harvest, gitignored; see .../touch/README). The ramdisk
+#         copy is the working set: the build system populates it from
+#         the source tree before --second-call runs.
+# Output: installer/modules/<device>.lgz — solid LGZ of
+#         system/lib64/modules/touch/<device>/... (root-relative, like
+#         the main cluster). The installer pushes the matching file INTO
+#         the main recovery payload at install time (--inject-lgz);
+#         reflash re-appends the live one to its manifest.
+#
+# Consume-and-prune: every packed file is DELETED from the ramdisk
+# (directories stay, structure survives), so device modules never enter
+# the main cluster, the snapshot manifest, the file lists, or the image.
+# Runs BEFORE lgz_compress_ramdisk + manifest generation for exactly
+# that reason.
+#
+# Best-effort, never fatal: without a harvest (or without host tools)
+# the build proceeds and the installer ships no touch archives.
+# Only shell/file utilities + the in-tree lgz binary (make-sandbox
+# safe: no nproc/lz4/cpio). TOUCH_DEVICES="shiba raven" restricts
+# packing (testing); pruning still covers every device dir found, so a
+# test build can never bloat the image with unpacked modules.
+build_device_touch_cpios() {
+    local ramdisk_root="$1"
+    local touch_base="$ramdisk_root/system/lib64/modules/touch"
+    local out_dir="$TREE_ROOT/installer/modules"
+    local lgz_bin
+    lgz_bin="$(lgz_get_host_binary 2>/dev/null)" || {
+        echo "    [TOUCH] WARNING: no lgz host binary, touch archives skipped"
+        return 0
+    }
+    [ -d "$touch_base" ] || {
+        echo "    [TOUCH] no touch harvest in ramdisk, touch archives skipped"
+        return 0
+    }
+    mkdir -p "$out_dir" 2>/dev/null || {
+        echo "    [TOUCH] WARNING: cannot create $out_dir, skipped"
+        return 0
+    }
+    # Thread count without nproc (banned in make recipe shells).
+    local jobs
+    jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null) && [ "$jobs" -gt 0 ] 2>/dev/null || \
+        jobs=$(grep -c ^processor /proc/cpuinfo 2>/dev/null) && [ "$jobs" -gt 0 ] 2>/dev/null || \
+        jobs=4
+    local built=0 skipped=0 pruned=0
+    local _dev_dir _dev
+    for _dev_dir in "$touch_base"/*/; do
+        [ -d "$_dev_dir" ] || continue
+        _dev=$(basename "$_dev_dir")
+        local _wanted=1
+        if [ -n "${TOUCH_DEVICES:-}" ]; then
+            case " $TOUCH_DEVICES " in *" $_dev "*) ;; *) _wanted=0 ;; esac
+        fi
+        if [ -z "$(find "$_dev_dir" -name '*.ko' | head -1)" ]; then
+            echo "    [TOUCH]   - $_dev: no modules, nothing to prune"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        if [ "$_wanted" = 1 ]; then
+            local manifest cluster
+            manifest=$(mktemp) || { echo "    [TOUCH] WARNING: mktemp failed for $_dev"; continue; }
+            ( cd "$ramdisk_root" && find "system/lib64/modules/touch/$_dev" -type f | sort ) | while IFS= read -r _rel; do
+                lgz_manifest_entry file "$ramdisk_root/$_rel" "$_rel" >> "$manifest"
+            done
+            cluster=$(mktemp) || { rm -f "$manifest"; continue; }
+            if ! ( cd "$ramdisk_root" && "$lgz_bin" pack "$manifest" "$cluster" -l 0 -j "$jobs" --preserve-all ) >>"$manifest.log" 2>&1; then
+                echo "    [TOUCH] WARNING: lgz pack failed for $_dev (see build log)"
+                rm -f "$manifest" "$manifest.log" "$cluster"
+                continue
+            fi
+            rm -f "$manifest" "$manifest.log"
+            if [ ! -s "$cluster" ]; then
+                echo "    [TOUCH] WARNING: empty archive for $_dev"
+                rm -f "$cluster"
+                continue
+            fi
+            if ! cp -f "$cluster" "$out_dir/$_dev.lgz" 2>/dev/null; then
+                echo "    [TOUCH] WARNING: cannot write $out_dir/$_dev.lgz"
+                rm -f "$cluster"
+                continue
+            fi
+            rm -f "$cluster"
+            echo "    [TOUCH]   + modules/$_dev.lgz ($(stat -c%s "$out_dir/$_dev.lgz") bytes)"
+            built=$((built + 1))
+        else
+            echo "    [TOUCH]   - $_dev: filtered out by TOUCH_DEVICES (pruned unpacked)"
+        fi
+        # Prune packed files, keep directories (structure survives).
+        find "$_dev_dir" -type f -delete 2>/dev/null || true
+        pruned=$((pruned + 1))
+    done
+    echo "    [TOUCH] done: $built device archives packed, $pruned device dirs pruned, $skipped skipped (no modules)"
+    return 0
 }
 
 lgz_compress_ramdisk() {
@@ -1002,6 +1104,19 @@ case "$CALL_TYPE" in
         else
             echo "    [THEME] WARNING: $TARGET_DIR/twres/ui.xml missing, variants skipped"
         fi
+        echo ""
+
+        echo ""
+
+        # --- Per-device touch archives (<device>.lgz) ---
+        # Consume-and-prune BEFORE the LGZ pack + manifest generation
+        # below: packed module files are deleted from the ramdisk here,
+        # so they can never enter the main cluster, the snapshot
+        # manifest, or the file lists. The harvest source is the ramdisk
+        # copy itself ($TARGET_DIR/.../touch/<device>).
+        echo ""
+        echo "    === Per-Device Touch Archives ==="
+        build_device_touch_cpios "$TARGET_DIR"
         echo ""
 
         # --- LGZ: Compress ramdisk binaries for space savings ---

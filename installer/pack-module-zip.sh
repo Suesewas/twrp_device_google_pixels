@@ -113,9 +113,24 @@ chmod +x install-desktop.sh install-recovery.sh META-INF/com/google/android/upda
 chmod 644 module.prop export.txt customize.sh 2>/dev/null || true
 
 rm -f "$OUT"
-zip -qr9 -X "$OUT" module.prop customize.sh export.txt install-recovery.sh \
-    install-desktop.sh install-desktop.bat install-desktop.exe install-desktop.AppImage \
-    "$PAYLOAD" bin/ META-INF/
+# Per-device touch archives (modules/<device>.lgz, built by
+# fox_build_callback.sh): optional — devices without a local harvest
+# simply ship no archive (installer warns, stock touch path covers it).
+MODULES_LIST=""
+if [ -d modules ]; then
+    MODULES_LIST="$(cd modules && ls *.lgz 2>/dev/null | sed 's|^|modules/|' || true)"
+fi
+if [ -n "$MODULES_LIST" ]; then
+    # Word-splitting the file list is intentional here.
+    # shellcheck disable=SC2086
+    zip -qr9 -X "$OUT" module.prop customize.sh export.txt install-recovery.sh \
+        install-desktop.sh install-desktop.bat install-desktop.exe install-desktop.AppImage \
+        "$PAYLOAD" $MODULES_LIST bin/ META-INF/
+else
+    zip -qr9 -X "$OUT" module.prop customize.sh export.txt install-recovery.sh \
+        install-desktop.sh install-desktop.bat install-desktop.exe install-desktop.AppImage \
+        "$PAYLOAD" bin/ META-INF/
+fi
 
 echo "--- $OUT ($(du -h "$OUT" | cut -f1)) ---"
 unzip -l "$OUT" | head -12
@@ -137,6 +152,15 @@ for f in module.prop customize.sh export.txt install-recovery.sh \
     META-INF/com/google/android/updater-script; do
     echo "$NAMES" | grep -qx "$f" || { echo "BAD: missing $f" >&2; exit 1; }
 done
+# Per-device touch archives: every staged modules/*.lgz must have
+# landed in the zip (staged but missing = pack bug, fail loudly).
+if [ -n "$MODULES_LIST" ]; then
+    # shellcheck disable=SC2086
+    for f in $MODULES_LIST; do
+        echo "$NAMES" | grep -qx "$f" || { echo "BAD: missing $f" >&2; exit 1; }
+    done
+    echo "OK: $(echo "$MODULES_LIST" | wc -w) device touch archives packed"
+fi
 echo "$NAMES" | grep -q "^bin/linux/" || { echo "BAD: no bin/linux/" >&2; exit 1; }
 echo "$NAMES" | grep -q "^bin/windows/" || { echo "BAD: no bin/windows/" >&2; exit 1; }
 echo "$NAMES" | grep -q "^bin/linux/platform-tools/fastboot" || { echo "BAD: no linux platform-tools" >&2; exit 1; }
