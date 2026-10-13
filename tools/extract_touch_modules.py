@@ -206,14 +206,29 @@ def acquire_from_zip(zpath, tmpdir, dumper, args):
             if os.path.isfile(md):
                 staged["ota_metadata"] = open(md).read()
         ensure_space(tmpdir, 8, args.quiet)
-        parts = ",".join(WANT_PARTS)
-        r = run([dumper, "-p", parts, "-o", imgdir,
+        # OTA diffs carry only CHANGED partitions (gs101 OTAs lack
+        # vendor_kernel_boot/system_dlkm entirely). Ask the dumper what the
+        # payload has and dump the intersection — a missing partition is a
+        # skipped source, never a fatal error.
+        have = set()
+        r = run([dumper, "-l", zpath], quiet=True)
+        # "-l" prints one "Found partitions:" line, comma-separated names
+        # with sizes: "abl (2.1 MB), vendor_dlkm (43 MB), ...".
+        for m in re.finditer(r"([a-z0-9_]+)\s*\(", r.stdout or "", re.I):
+            have.add(m.group(1).lower())
+        parts = [p for p in WANT_PARTS if p in have] if have else list(WANT_PARTS)
+        skipped = [p for p in WANT_PARTS if p not in parts]
+        if skipped:
+            log(f"partitions absent from payload, skipped: {', '.join(skipped)}")
+        if not parts:
+            raise SystemExit("payload has none of: " + ", ".join(WANT_PARTS))
+        r = run([dumper, "-p", ",".join(parts), "-o", imgdir,
                  "-c", "16", os.path.join(zpath)], quiet=args.quiet)
         # payload-dumper-go wants (payload, outdir) positionally on some builds;
         # retry that form when the flag form fails.
         if r.returncode != 0:
             log(f"dumper flag form failed, retrying positional: {r.stderr.strip()[:200]}")
-            r = run([dumper, "-p", parts, zpath, imgdir], quiet=args.quiet)
+            r = run([dumper, "-p", ",".join(parts), zpath, imgdir], quiet=args.quiet)
         if r.returncode != 0:
             raise SystemExit(f"payload-dumper-go failed:\n{r.stderr[-2000:]}")
     elif inner_imgs or is_image_zip:
